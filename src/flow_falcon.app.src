@@ -1,0 +1,12 @@
+{application, flow_falcon,
+ [
+  {description, ""},
+  {vsn, "1.0"},
+  {registered, []},
+  {applications, [
+                  kernel,
+                  stdlib
+                 ]},
+  {mod, {flow_falcon_app, []}},
+  {env, []}
+]}.
