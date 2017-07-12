@@ -12,15 +12,18 @@
 
 -export([start_link/0]).
 
--export([flow_acc/2,         %% 次数统计
-         flow_val/2,         %% 次数统计
+-export([flow_acc/2,         %% 次数累计
+         flow_val/2,         %% 次数设置
+         flow_acc/3,         %% 次数累计
+         flow_val/3,         %% 次数设置
          flow_all/0,         %% 统计流量
          flow_list/0,        %% 所有流量
          flow_list/1,        %% 所有流量
          flow_near/1,        %% 最近流量
          flow_near/0]).      %% 最近流量
 
--export([falcon/1]).         %% 上传
+-export([falcon/1,           %% 上传
+         falcon_cnt/0]).     %% 上传
 
 %% callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
@@ -40,7 +43,7 @@
 -define(MIN_NAME_LIST, [one_min_ps, five_min_ps]).
 -define(MIN_LEN_LIST,  [60, 5 * 60]).
 
--define(SECOND, (erlang:system_time(seconds) div 1000)).
+-define(SECOND, erlang:system_time(seconds)).
 
 -record(state, {start_time = 0, flow_list = [], next_profile = 0, next_falcon = 0}).
 
@@ -56,16 +59,22 @@ start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 flow_acc(Key, Inc) ->
-    catch ets:update_counter(?ETS_ACC, Key, Inc, {Key, 0}).
+    catch ets:update_counter(?ETS_ACC, {all, Key}, Inc, {{all, Key}, 0}).
 
 flow_val(Key, Val) ->
-    catch ets:insert(?ETS_VAL, {Key, Val}).
+    catch ets:insert(?ETS_VAL, {{all, Key}, Val}).
+
+flow_acc(K1, K2, Inc) ->
+    catch ets:update_counter(?ETS_ACC, {K1, K2}, Inc, {{K1, K2}, 0}).
+
+flow_val(K1, K2, Val) ->
+    catch ets:insert(?ETS_VAL, {{K1, K2}, Val}).
 
 flow_all() ->
     FL = flow_list(),
-    [{last_second, proplists:get_value(last_second, FL)},
-     {all, proplists:get_value(all, FL)},
-     {all, proplists:get_value(all, flow_near())}].
+    [{last_second, proplists:get_value(last_second, FL, 0)},
+     {all, proplists:get_value(all, FL, [])},
+     {all, proplists:get_value(all, flow_near(), [])}].
 
 flow_list() ->
     gen_server:call(?MODULE, flow_list).
@@ -79,11 +88,14 @@ flow_near() ->
 flow_near(Key) ->
     proplists:get_value(Key, flow_near()).
 
+falcon_cnt() ->
+    proplists:get_value(falcon_cnt, proplists:get_value(?MODULE, flow_list())).
+
 %%------------------------------------------------------------------------------
 init([]) ->
     ets:new(?ETS_ACC, [named_table, public, {write_concurrency, true}]),
     ets:new(?ETS_VAL, [named_table, public, {write_concurrency, true}]),
-    {ok, #state{}, 0}.
+    {ok, #state{start_time = ?SECOND}, 0}.
 
 handle_call(flow_list, _From, State) ->
     {reply, catch do_flow_list(State), State};
@@ -118,8 +130,12 @@ do_get_flow() -> ets:tab2list(?ETS_VAL) ++ ets:tab2list(?ETS_ACC).
 
 %%------------------------------------------------------------------------------
 do_falcon(State) ->
-    catch falcon(do_falcon_flow(State)),
-    State#state{next_falcon = ?SECOND + ?FALCON_CD}.
+    case ?SECOND >= State#state.next_falcon of
+        false -> State;
+        true ->
+            catch falcon(do_falcon_flow(State)) =:= ok andalso flow_acc(?MODULE, falcon_cnt, 1),
+            State#state{next_falcon = ?SECOND + ?FALCON_CD}
+    end.
 
 do_falcon_flow(State) ->
     Flow = ets:tab2list(?ETS_ACC),
@@ -202,11 +218,11 @@ do_append_flow(List, New) ->
     lists:foldl(Fun, [], New).
 
 %%------------------------------------------------------------------------------
-falcon([]) -> skip;
+falcon([]) -> ok;
 falcon(List) ->
-    case proplists:delete(included_applications, application:get_all_env(flow_falcon)) of
-        [] -> skip;
-        Props ->
+    case application:get_env(flow_falcon, falcon) of
+        undefine -> skip;
+        {ok, Props} ->
             Post = [{metric, proplists:get_value(metric, Props)},
                     {endpoint, proplists:get_value(endpoint, Props)},
                     {timestamp, ?SECOND},
@@ -215,19 +231,20 @@ falcon(List) ->
             List1 = do_form_post(Post, List, []),
             {ok, ConnPid} = gun:open(proplists:get_value(host, Props), proplists:get_value(port, Props)),
             try
-                Ref = gun:post(ConnPid, proplists:get_value(path, Props), [], List1),
                 {ok, http} = gun:await_up(ConnPid),
-                {response, nofin, 200, _} = gun:await(ConnPid, Ref)
-            catch E:R -> {false, {E, R, erlang:get_stacktrace()}}
+                Ref = gun:post(ConnPid, proplists:get_value(path, Props), [], List1),
+                {response, nofin, 200, _} = gun:await(ConnPid, Ref), ok
+            catch E:R -> {error, {E, R, erlang:get_stacktrace()}}
             after
                 gun:close(ConnPid),
                 gun:flush(ConnPid)
             end
     end.
 
-do_form_post(Post, [{Key1, Key2, Val} | T], Acc) ->
-    Tags = list_to_binary("k1=" ++ atom_to_list(Key1)
-                          ++ ",k2=" ++ atom_to_list(Key2)),
+do_form_post(Post, [{OP, K1, K2, Val} | T], Acc) ->
+    Tags = list_to_binary("op=" ++ atom_to_list(OP)
+                          ++ ",k1=" ++ atom_to_list(K1)
+                          ++ ",k2=" ++ atom_to_list(K2)),
     do_form_post(Post, T, [[{value, Val}, {tags, Tags} | Post] | Acc]);
 do_form_post(_Time, [], Acc) -> jsx:encode(Acc).
 

@@ -15,6 +15,10 @@
 
 %%------------------------------------------------------------------------------
 start(_StartType, _StartArgs) ->
+    ssl:start(),
+    application:ensure_started(cowlib),
+    application:ensure_started(ranch),
+    application:ensure_started(gun),
     flow_falcon_sup:start_link().
 
 stop(_State) ->
