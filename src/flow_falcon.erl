@@ -113,9 +113,9 @@ terminate(_Reason, _State) ->
     ok.
 
 handle_info(timeout, State) ->
-    erlang:send_after(?TIMEOUT, self(), timeout),
     State1 = do_flow(State),
     State2 = do_falcon(State1),
+    erlang:send_after(?TIMEOUT, self(), timeout),
     {noreply, State2};
 
 handle_info(_Info, State) ->
