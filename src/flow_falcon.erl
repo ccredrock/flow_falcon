@@ -12,18 +12,23 @@
 
 -export([start_link/0]).
 
--export([flow_acc/2,         %% 次数累计
-         flow_val/2,         %% 次数设置
-         flow_acc/3,         %% 次数累计
-         flow_val/3,         %% 次数设置
-         flow_all/0,         %% 统计流量
-         flow_list/0,        %% 所有流量
-         flow_list/1,        %% 所有流量
-         flow_near/1,        %% 最近流量
-         flow_near/0]).      %% 最近流量
+-export([add_acc/3,     %% 次数累计
+         set_acc/3,     %% 次数累计
+         set_val/3,     %% 次数设置
+         inc_total/1,   %% 次数累计
+         inc_total/2,   %% 次数累计
+         add_total/2,   %% 次数累计
+         add_total/3,   %% 次数累计
+         set_total/2,   %% 次数设置
+         set_total/3,   %% 次数累计
+         list_total/0,  %% 统计流量
+         list_flow/0,   %% 所有流量
+         list_flow/1,   %% 所有流量
+         list_near/1,   %% 最近流量
+         list_near/0]). %% 最近流量
 
--export([falcon/1,           %% 上传
-         falcon_cnt/0]).     %% 上传
+-export([falcon/1,           %% 上传列表
+         falcon_cnt/0]).     %% 上传次数
 
 %% callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
@@ -39,11 +44,11 @@
 
 -define(FALCON_CD,     1 * 60). %% 1分钟
 
--define(MIN_LEN,       5 * 60). %% 5分钟
--define(MIN_NAME_LIST, [one_min_ps, five_min_ps]).
+-define(MIN_LEN,       5 * 60 + 1). %% 5分钟
+-define(MIN_NAME_LIST, [one_ps, five_ps]).
 -define(MIN_LEN_LIST,  [60, 5 * 60]).
 
--define(SECOND, erlang:system_time(seconds)).
+-define(SECOND(), erlang:system_time(seconds)).
 
 -record(state, {start_time = 0, flow_list = [], next_profile = 0, next_falcon = 0}).
 
@@ -58,44 +63,61 @@ stop() ->
 start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
-flow_acc(Key, Inc) ->
-    catch ets:update_counter(?ETS_ACC, {all, Key}, Inc, {{all, Key}, 0}).
+add_acc(OP, Type, Inc) ->
+    catch ets:update_counter(?ETS_ACC, {OP, Type}, Inc, {{OP, Type}, 0}).
 
-flow_val(Key, Val) ->
-    catch ets:insert(?ETS_VAL, {{all, Key}, Val}).
+set_acc(OP, Type, Val) ->
+    catch ets:insert(?ETS_ACC, {{OP, Type}, Val}).
 
-flow_acc(K1, K2, Inc) ->
-    catch ets:update_counter(?ETS_ACC, {K1, K2}, Inc, {{K1, K2}, 0}).
+set_val(OP, Type, Val) ->
+    catch ets:insert(?ETS_VAL, {{OP, Type}, Val}).
 
-flow_val(K1, K2, Val) ->
-    catch ets:insert(?ETS_VAL, {{K1, K2}, Val}).
+inc_total(OP) ->
+    add_total(OP, 1).
 
-flow_all() ->
-    FL = flow_list(),
+inc_total(OP, Type) ->
+    add_total(OP, Type, 1).
+
+add_total(OP, Inc) ->
+    add_acc(total, OP, Inc).
+
+add_total(OP, Type, Inc) ->
+    add_acc(total, OP, Inc),
+    add_acc(OP, Type, Inc).
+
+set_total(OP, Val) ->
+    set_val(total, OP, Val).
+
+set_total(OP, Type, Val) ->
+    set_val(total, OP, Val),
+    set_val(OP, Type, Val).
+
+list_total() ->
+    FL = list_flow(),
     [{last_second, proplists:get_value(last_second, FL, 0)},
-     {all, proplists:get_value(all, FL, [])},
-     {all, proplists:get_value(all, flow_near(), [])}].
+     {total, proplists:get_value(total, FL, [])},
+     {total, proplists:get_value(total, list_near(), [])}].
 
-flow_list() ->
-    gen_server:call(?MODULE, flow_list).
+list_flow() ->
+    gen_server:call(?MODULE, flow_list, ?TIMEOUT).
 
-flow_list(Key) ->
-    proplists:get_value(Key, flow_list()).
+list_flow(OP) ->
+    proplists:get_value(OP, list_flow()).
 
-flow_near() ->
-    gen_server:call(?MODULE, flow_near).
+list_near() ->
+    gen_server:call(?MODULE, flow_near, ?TIMEOUT).
 
-flow_near(Key) ->
-    proplists:get_value(Key, flow_near()).
+list_near(OP) ->
+    proplists:get_value(OP, list_near()).
 
 falcon_cnt() ->
-    proplists:get_value(falcon_cnt, proplists:get_value(?MODULE, flow_list())).
+    proplists:get_value(falcon_cnt, proplists:get_value(?MODULE, list_flow())).
 
 %%------------------------------------------------------------------------------
 init([]) ->
     ets:new(?ETS_ACC, [named_table, public, {write_concurrency, true}]),
     ets:new(?ETS_VAL, [named_table, public, {write_concurrency, true}]),
-    {ok, #state{start_time = ?SECOND}, 0}.
+    {ok, #state{start_time = ?SECOND()}, 0}.
 
 handle_call(flow_list, _From, State) ->
     {reply, catch do_flow_list(State), State};
@@ -123,25 +145,56 @@ handle_info(_Info, State) ->
 
 %%------------------------------------------------------------------------------
 do_flow(State) ->
-    Flow = do_get_flow(),
+    Flow = ets:tab2list(?ETS_ACC),
     State#state{flow_list = lists:sublist([Flow | State#state.flow_list], ?MIN_LEN)}.
 
-do_get_flow() -> ets:tab2list(?ETS_VAL) ++ ets:tab2list(?ETS_ACC).
+do_flow_sys() ->
+    List = do_get_cpu(),
+    Cpu = round(lists:sum([X || {_, X} <- List]) * 100 / length(List)),
+    set_val(profile, cpu, Cpu),
+    set_val(profile, total_memory, erlang:memory(total)),
+    set_val(profile, process_memory, erlang:memory(processes)),
+    set_val(profile, binary_memory, erlang:memory(binary)),
+    {{_, Input}, {_, Output}} = erlang:statistics(io),
+    set_acc(profile, io_input, Input),
+    set_acc(profile, io_output, Output),
+    set_val(profile, process_count, erlang:system_info(process_count)),
+    MsgQ = lists:sum([Y || {message_queue_len, Y} <- [process_info(X, message_queue_len) || X <- processes()]]),
+    set_val(profile, msg_queue, MsgQ).
+
+do_get_cpu() ->
+   erlang:system_flag(scheduler_wall_time, true),
+   Ts0 = lists:sort(statistics(scheduler_wall_time)),
+   timer:sleep(100),
+   Ts1 = lists:sort(statistics(scheduler_wall_time)),
+   erlang:system_flag(scheduler_wall_time, false),
+   Fun = fun({{I, A0, T0}, {I, A1, T1}}) ->
+                 {I, round((A1 - A0) * 100 / (T1 - T0)) / 100}
+         end,
+   lists:map(Fun, lists:zip(Ts0, Ts1)).
 
 %%------------------------------------------------------------------------------
 do_falcon(State) ->
-    case ?SECOND >= State#state.next_falcon of
+    Now = ?SECOND(),
+    case Now >= State#state.next_falcon of
         false -> State;
         true ->
-            catch falcon(do_falcon_flow(State)) =:= ok andalso flow_acc(?MODULE, falcon_cnt, 1),
-            State#state{next_falcon = ?SECOND + ?FALCON_CD}
+            catch do_flow_sys(),
+            case falcon(do_falcon_flow(State)) of
+                ok ->
+                    add_acc(profile, falcon_cnt, 1),
+                    State#state{next_falcon = Now + ?FALCON_CD};
+                {error, Reason} ->
+                    error_logger:error_msg("flow_falcon error ~p~n", [{Reason}]),
+                    State#state{next_falcon = Now + ?FALCON_CD}
+            end
     end.
 
 do_falcon_flow(State) ->
     Flow = ets:tab2list(?ETS_ACC),
     AddList = do_sub_flow(Flow, do_get_nth_flow(?FALCON_CD + 1, State#state.flow_list)),
     [{val, A, B, C} || {{A, B}, C} <- ets:tab2list(?ETS_VAL)]
-    ++ [{acc, A, B, C} || {{A, B}, C} <- ets:tab2list(?ETS_ACC)]
+    ++ [{acc, A, B, C} || {{A, B}, C} <- Flow]
     ++ [{add, A, B, C} || {{A, B}, C} <- AddList].
 
 do_sub_flow(NewList, []) -> NewList;
@@ -162,9 +215,9 @@ do_get_nth_flow(Nth, List) ->
 
 %%------------------------------------------------------------------------------
 do_flow_list(State) ->
-    [{last_second, do_get_last(State)}] ++ do_format_flow(do_get_flow()).
+    [{last_second, do_get_last(State)}] ++ do_format_flow(ets:tab2list(?ETS_VAL) ++ ets:tab2list(?ETS_ACC)).
 
-do_get_last(State) -> ?SECOND - State#state.start_time.
+do_get_last(State) -> ?SECOND() - State#state.start_time.
 
 do_format_flow(Flow) ->
     Fun = fun(F, Acc) ->
@@ -180,24 +233,22 @@ do_format_flow(Flow) ->
 
 do_flow_near(State) ->
     Last = do_get_last(State),
-    Flow = do_get_flow(),
+    Flow = ets:tab2list(?ETS_ACC),
     Result = do_list_flow(?MIN_LEN_LIST,
                           State#state.flow_list,
                           Flow,
                           length(State#state.flow_list),
                           do_ps_flow(Flow, Last),
                           []),
-    [{last_second, Last},
-     list_to_tuple([op] ++ ?MIN_NAME_LIST ++ [acc_min_ps])]
-    ++ do_format_flow(Result).
+    [{last_second, Last}, list_to_tuple([op] ++ ?MIN_NAME_LIST ++ [acc_ps])] ++ do_format_flow(Result).
 
 do_list_flow([HLen | T], FlowList, Flow, Len, PsFlow, Acc) ->
     case HLen > Len of
         true ->
             do_list_flow(T, FlowList, Flow, Len, PsFlow, do_append_flow(Acc, PsFlow));
         false ->
-            HFlow = do_get_nth_flow(HLen + 1, Acc),
-            HPsFlow = do_ps_flow(do_sub_flow(Flow, HFlow), Len),
+            HFlow = do_get_nth_flow(HLen + 1, FlowList),
+            HPsFlow = do_ps_flow(do_sub_flow(Flow, HFlow), HLen),
             do_list_flow(T, FlowList, Flow, Len, PsFlow, do_append_flow(Acc, HPsFlow))
     end;
 do_list_flow([], _AccFlow, _Flow, _Len, PsFlow, Acc) ->
@@ -225,7 +276,7 @@ falcon(List) ->
         {ok, Props} ->
             Post = [{metric, proplists:get_value(metric, Props)},
                     {endpoint, proplists:get_value(endpoint, Props)},
-                    {timestamp, ?SECOND},
+                    {timestamp, ?SECOND()},
                     {counterType, 'GAUGE'},
                     {step, ?FALCON_CD}],
             List1 = do_form_post(Post, List, []),
@@ -241,10 +292,10 @@ falcon(List) ->
             end
     end.
 
-do_form_post(Post, [{OP, K1, K2, Val} | T], Acc) ->
-    Tags = list_to_binary("op=" ++ atom_to_list(OP)
-                          ++ ",k1=" ++ atom_to_list(K1)
-                          ++ ",k2=" ++ atom_to_list(K2)),
+do_form_post(Post, [{Way, OP, Type, Val} | T], Acc) ->
+    Tags = list_to_binary("way=" ++ atom_to_list(Way)
+                          ++ ",op=" ++ atom_to_list(OP)
+                          ++ ",type=" ++ atom_to_list(Type)),
     do_form_post(Post, T, [[{value, Val}, {tags, Tags} | Post] | Acc]);
 do_form_post(_Time, [], Acc) -> jsx:encode(Acc).
 
