@@ -14,6 +14,7 @@
 
 -export([add_acc/2,     %% 次数累计
          add_acc/3,     %% 次数累计
+         add_total/2,   %% 次数累计
          add_total/3,   %% 次数累计
          set_val/2,     %% 次数设置
          set_val/3,     %% 次数设置
@@ -65,6 +66,9 @@ add_acc(OP, Inc) ->
 
 add_acc(OP, Type, Inc) ->
     catch ets:update_counter(?ETS_ACC, {OP, Type}, Inc, {{OP, Type}, 0}).
+
+add_total(OP, Type) ->
+    add_total(OP, Type, 1).
 
 add_total(OP, Type, Inc) ->
     add_acc(OP, Inc),
