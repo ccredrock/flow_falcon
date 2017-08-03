@@ -12,13 +12,13 @@
 
 -export([start_link/0]).
 
--export([add_acc/2,     %% 次数累计
-         add_acc/3,     %% 次数累计
-         add_total/1,   %% 次数累计
+-export([add_acc/3,     %% 次数累计
+         set_val/3,     %% 次数设置
+         inc_total/1,   %% 次数累计
+         inc_total/2,   %% 次数累计
          add_total/2,   %% 次数累计
          add_total/3,   %% 次数累计
-         set_val/2,     %% 次数设置
-         set_val/3,     %% 次数设置
+         set_total/2,   %% 次数设置
          set_total/3,   %% 次数累计
          list_total/0,  %% 统计流量
          list_flow/0,   %% 所有流量
@@ -62,31 +62,31 @@ stop() ->
 start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
-add_acc(OP, Inc) ->
-    catch ets:update_counter(?ETS_ACC, {total, OP}, Inc, {{total, OP}, 0}).
-
 add_acc(OP, Type, Inc) ->
     catch ets:update_counter(?ETS_ACC, {OP, Type}, Inc, {{OP, Type}, 0}).
-
-add_total(OP) ->
-    add_acc(OP, 1).
-
-add_total(OP, Type) ->
-    add_total(OP, Type, 1).
-
-add_total(OP, Type, Inc) ->
-    add_acc(OP, Inc),
-    add_acc(OP, Type, Inc).
-
-set_val(OP, Val) ->
-    catch ets:insert(?ETS_VAL, {{total, OP}, Val}).
 
 set_val(OP, Type, Val) ->
     catch ets:insert(?ETS_VAL, {{OP, Type}, Val}).
 
-set_total(OP, Type, Inc) ->
-    set_val(OP, Inc),
-    set_val(OP, Type, Inc).
+inc_total(OP) ->
+    add_total(OP, 1).
+
+inc_total(OP, Type) ->
+    add_total(OP, Type, 1).
+
+add_total(OP, Inc) ->
+    add_total(total, OP, Inc).
+
+add_total(OP, Type, Inc) ->
+    add_total(total, OP, Inc),
+    add_acc(OP, Type, Inc).
+
+set_total(OP, Val) ->
+    set_val(total, OP, Val).
+
+set_total(OP, Type, Val) ->
+    set_val(total, OP, Val),
+    set_val(OP, Type, Val).
 
 list_total() ->
     FL = list_flow(),
