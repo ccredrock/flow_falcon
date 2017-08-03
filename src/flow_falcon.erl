@@ -75,10 +75,10 @@ inc_total(OP, Type) ->
     add_total(OP, Type, 1).
 
 add_total(OP, Inc) ->
-    add_total(total, OP, Inc).
+    add_acc(total, OP, Inc).
 
 add_total(OP, Type, Inc) ->
-    add_total(total, OP, Inc),
+    add_acc(total, OP, Inc),
     add_acc(OP, Type, Inc).
 
 set_total(OP, Val) ->
