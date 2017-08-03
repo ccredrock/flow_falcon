@@ -141,18 +141,22 @@ handle_info(_Info, State) ->
 
 %%------------------------------------------------------------------------------
 do_flow(State) ->
-    Flow = do_get_flow(),
+    Flow = ets:tab2list(?ETS_ACC),
     State#state{flow_list = lists:sublist([Flow | State#state.flow_list], ?MIN_LEN)}.
-
-do_get_flow() -> ets:tab2list(?ETS_VAL) ++ ets:tab2list(?ETS_ACC).
 
 %%------------------------------------------------------------------------------
 do_falcon(State) ->
     case ?SECOND >= State#state.next_falcon of
         false -> State;
         true ->
-            catch falcon(do_falcon_flow(State)) =:= ok andalso add_acc(?MODULE, falcon_cnt, 1),
-            State#state{next_falcon = ?SECOND + ?FALCON_CD}
+            case falcon(do_falcon_flow(State)) of
+                ok ->
+                    add_total(profile, falcon_cnt, 1),
+                    State#state{next_falcon = ?SECOND + ?FALCON_CD};
+                {error, Reason} ->
+                    error_logger:error_msg("flow_falcon error ~p~n", [{Reason}]),
+                    State#state{next_falcon = ?SECOND + ?FALCON_CD}
+            end
     end.
 
 do_falcon_flow(State) ->
@@ -180,7 +184,7 @@ do_get_nth_flow(Nth, List) ->
 
 %%------------------------------------------------------------------------------
 do_flow_list(State) ->
-    [{last_second, do_get_last(State)}] ++ do_format_flow(do_get_flow()).
+    [{last_second, do_get_last(State)}] ++ do_format_flow(ets:tab2list(?ETS_VAL) ++ ets:tab2list(?ETS_ACC)).
 
 do_get_last(State) -> ?SECOND - State#state.start_time.
 
