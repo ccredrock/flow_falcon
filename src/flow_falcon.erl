@@ -198,7 +198,7 @@ do_format_flow(Flow) ->
 
 do_flow_near(State) ->
     Last = do_get_last(State),
-    Flow = do_get_flow(),
+    Flow = ets:tab2list(?ETS_ACC),
     Result = do_list_flow(?MIN_LEN_LIST,
                           State#state.flow_list,
                           Flow,
