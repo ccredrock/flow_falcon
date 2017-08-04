@@ -43,7 +43,7 @@
 
 -define(FALCON_CD,     1 * 60). %% 1分钟
 
--define(MIN_LEN,       5 * 60). %% 5分钟
+-define(MIN_LEN,       5 * 60 + 1). %% 5分钟
 -define(MIN_NAME_LIST, [one_ps, five_ps]).
 -define(MIN_LEN_LIST,  [60, 5 * 60]).
 
@@ -216,8 +216,8 @@ do_list_flow([HLen | T], FlowList, Flow, Len, PsFlow, Acc) ->
         true ->
             do_list_flow(T, FlowList, Flow, Len, PsFlow, do_append_flow(Acc, PsFlow));
         false ->
-            HFlow = do_get_nth_flow(HLen + 1, Acc),
-            HPsFlow = do_ps_flow(do_sub_flow(Flow, HFlow), Len),
+            HFlow = do_get_nth_flow(HLen + 1, FlowList),
+            HPsFlow = do_ps_flow(do_sub_flow(Flow, HFlow), HLen),
             do_list_flow(T, FlowList, Flow, Len, PsFlow, do_append_flow(Acc, HPsFlow))
     end;
 do_list_flow([], _AccFlow, _Flow, _Len, PsFlow, Acc) ->
