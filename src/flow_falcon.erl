@@ -141,7 +141,7 @@ handle_info(_Info, State) ->
 
 %%------------------------------------------------------------------------------
 do_flow(State) ->
-    do_flow_sys(),
+    catch do_flow_sys(),
     Flow = ets:tab2list(?ETS_ACC),
     State#state{flow_list = lists:sublist([Flow | State#state.flow_list], ?MIN_LEN)}.
 
@@ -156,7 +156,7 @@ do_flow_sys() ->
     set_val(profile, io_input, Input),
     set_val(profile, io_output, Output),
     set_val(profile, process_count, erlang:system_info(process_count)),
-    MsgQ = lists:sum([element(2, process_info(X, message_queue_len)) || X <- processes()]),
+    MsgQ = lists:sum([Y || {message_queue_len, Y} <- [process_info(X, message_queue_len) || X <- processes()]]),
     set_val(profile, msg_queue, MsgQ).
 
 do_get_cpu() ->
