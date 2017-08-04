@@ -13,6 +13,7 @@
 -export([start_link/0]).
 
 -export([add_acc/3,     %% 次数累计
+         set_acc/3,     %% 次数累计
          set_val/3,     %% 次数设置
          inc_total/1,   %% 次数累计
          inc_total/2,   %% 次数累计
@@ -47,7 +48,7 @@
 -define(MIN_NAME_LIST, [one_ps, five_ps]).
 -define(MIN_LEN_LIST,  [60, 5 * 60]).
 
--define(SECOND, erlang:system_time(seconds)).
+-define(SECOND(), erlang:system_time(seconds)).
 
 -record(state, {start_time = 0, flow_list = [], next_profile = 0, next_falcon = 0}).
 
@@ -63,6 +64,9 @@ start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 add_acc(OP, Type, Inc) ->
+    catch ets:update_counter(?ETS_ACC, {OP, Type}, Inc, {{OP, Type}, 0}).
+
+set_acc(OP, Type, Inc) ->
     catch ets:update_counter(?ETS_ACC, {OP, Type}, Inc, {{OP, Type}, 0}).
 
 set_val(OP, Type, Val) ->
@@ -113,7 +117,7 @@ falcon_cnt() ->
 init([]) ->
     ets:new(?ETS_ACC, [named_table, public, {write_concurrency, true}]),
     ets:new(?ETS_VAL, [named_table, public, {write_concurrency, true}]),
-    {ok, #state{start_time = ?SECOND}, 0}.
+    {ok, #state{start_time = ?SECOND()}, 0}.
 
 handle_call(flow_list, _From, State) ->
     {reply, catch do_flow_list(State), State};
@@ -141,7 +145,6 @@ handle_info(_Info, State) ->
 
 %%------------------------------------------------------------------------------
 do_flow(State) ->
-    catch do_flow_sys(),
     Flow = ets:tab2list(?ETS_ACC),
     State#state{flow_list = lists:sublist([Flow | State#state.flow_list], ?MIN_LEN)}.
 
@@ -153,8 +156,8 @@ do_flow_sys() ->
     set_val(profile, process_memory, erlang:memory(processes)),
     set_val(profile, binary_memory, erlang:memory(binary)),
     {{_, Input}, {_, Output}} = erlang:statistics(io),
-    set_val(profile, io_input, Input),
-    set_val(profile, io_output, Output),
+    set_acc(profile, io_input, Input),
+    set_acc(profile, io_output, Output),
     set_val(profile, process_count, erlang:system_info(process_count)),
     MsgQ = lists:sum([Y || {message_queue_len, Y} <- [process_info(X, message_queue_len) || X <- processes()]]),
     set_val(profile, msg_queue, MsgQ).
@@ -172,16 +175,18 @@ do_get_cpu() ->
 
 %%------------------------------------------------------------------------------
 do_falcon(State) ->
-    case ?SECOND >= State#state.next_falcon of
+    Now = ?SECOND(),
+    case Now >= State#state.next_falcon of
         false -> State;
         true ->
+            catch do_flow_sys(),
             case falcon(do_falcon_flow(State)) of
                 ok ->
                     add_acc(profile, falcon_cnt, 1),
-                    State#state{next_falcon = ?SECOND + ?FALCON_CD};
+                    State#state{next_falcon = Now + ?FALCON_CD};
                 {error, Reason} ->
                     error_logger:error_msg("flow_falcon error ~p~n", [{Reason}]),
-                    State#state{next_falcon = ?SECOND + ?FALCON_CD}
+                    State#state{next_falcon = Now + ?FALCON_CD}
             end
     end.
 
@@ -212,7 +217,7 @@ do_get_nth_flow(Nth, List) ->
 do_flow_list(State) ->
     [{last_second, do_get_last(State)}] ++ do_format_flow(ets:tab2list(?ETS_VAL) ++ ets:tab2list(?ETS_ACC)).
 
-do_get_last(State) -> ?SECOND - State#state.start_time.
+do_get_last(State) -> ?SECOND() - State#state.start_time.
 
 do_format_flow(Flow) ->
     Fun = fun(F, Acc) ->
@@ -271,7 +276,7 @@ falcon(List) ->
         {ok, Props} ->
             Post = [{metric, proplists:get_value(metric, Props)},
                     {endpoint, proplists:get_value(endpoint, Props)},
-                    {timestamp, ?SECOND},
+                    {timestamp, ?SECOND()},
                     {counterType, 'GAUGE'},
                     {step, ?FALCON_CD}],
             List1 = do_form_post(Post, List, []),
