@@ -147,7 +147,7 @@ do_flow(State) ->
 
 do_flow_sys() ->
     List = do_get_cpu(),
-    Cpu = round(lists:sum([X || {_, X} <- List] * 100 / length(List))),
+    Cpu = round(lists:sum([X || {_, X} <- List]) * 100 / length(List)),
     set_val(profile, cpu, Cpu),
     set_val(profile, total_memory, erlang:memory(total)),
     set_val(profile, process_memory, erlang:memory(processes)),
