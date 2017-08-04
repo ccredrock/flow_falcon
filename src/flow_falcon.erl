@@ -141,8 +141,34 @@ handle_info(_Info, State) ->
 
 %%------------------------------------------------------------------------------
 do_flow(State) ->
+    do_flow_sys(),
     Flow = ets:tab2list(?ETS_ACC),
     State#state{flow_list = lists:sublist([Flow | State#state.flow_list], ?MIN_LEN)}.
+
+do_flow_sys() ->
+    List = do_get_cpu(),
+    Cpu = round(lists:sum([X || {_, X} <- List] * 100 / length(List))),
+    set_val(profile, cpu, Cpu),
+    set_val(profile, total_memory, erlang:memory(total)),
+    set_val(profile, process_memory, erlang:memory(processes)),
+    set_val(profile, binary_memory, erlang:memory(binary)),
+    {{_, Input}, {_, Output}} = erlang:statistics(io),
+    set_val(profile, io_input, Input),
+    set_val(profile, io_output, Output),
+    set_val(profile, process_count, erlang:system_info(process_count)),
+    MsgQ = lists:sum([element(2, process_info(X, message_queue_len)) || X <- processes()]),
+    set_val(profile, msg_queue, MsgQ).
+
+do_get_cpu() ->
+   erlang:system_flag(scheduler_wall_time, true),
+   Ts0 = lists:sort(statistics(scheduler_wall_time)),
+   timer:sleep(100),
+   Ts1 = lists:sort(statistics(scheduler_wall_time)),
+   erlang:system_flag(scheduler_wall_time, false),
+   Fun = fun({{I, A0, T0}, {I, A1, T1}}) ->
+                 {I, round((A1 - A0) * 100 / (T1 - T0)) / 100}
+         end,
+   lists:map(Fun, lists:zip(Ts0, Ts1)).
 
 %%------------------------------------------------------------------------------
 do_falcon(State) ->
@@ -151,7 +177,7 @@ do_falcon(State) ->
         true ->
             case falcon(do_falcon_flow(State)) of
                 ok ->
-                    add_total(profile, falcon_cnt, 1),
+                    add_acc(profile, falcon_cnt, 1),
                     State#state{next_falcon = ?SECOND + ?FALCON_CD};
                 {error, Reason} ->
                     error_logger:error_msg("flow_falcon error ~p~n", [{Reason}]),
