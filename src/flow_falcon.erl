@@ -67,7 +67,7 @@ add_acc(OP, Type, Inc) ->
     catch ets:update_counter(?ETS_ACC, {OP, Type}, Inc, {{OP, Type}, 0}).
 
 set_acc(OP, Type, Val) ->
-    catch ets:insert(?ETS_ACC, {OP, Type}, Val).
+    catch ets:insert(?ETS_ACC, {{OP, Type}, Val}).
 
 set_val(OP, Type, Val) ->
     catch ets:insert(?ETS_VAL, {{OP, Type}, Val}).
