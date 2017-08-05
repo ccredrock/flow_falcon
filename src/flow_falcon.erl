@@ -274,13 +274,15 @@ falcon(List) ->
     case application:get_env(flow_falcon, falcon) of
         undefine -> skip;
         {ok, Props} ->
-            Post = [{metric, proplists:get_value(metric, Props)},
-                    {endpoint, proplists:get_value(endpoint, Props)},
+            {ok, HostName} = inet:gethostname(),
+            Post = [{metric, list_to_binary(proplists:get_value(metric, Props))},
+                    {endpoint, list_to_binary(proplists:get_value(endpoint, Props, HostName))},
                     {timestamp, ?SECOND()},
                     {counterType, 'GAUGE'},
                     {step, ?FALCON_CD}],
             List1 = do_form_post(Post, List, []),
-            {ok, ConnPid} = gun:open(proplists:get_value(host, Props), proplists:get_value(port, Props)),
+            {ok, ConnPid} = gun:open(proplists:get_value(host, Props),
+                                     proplists:get_value(port, Props)),
             try
                 {ok, http} = gun:await_up(ConnPid),
                 Ref = gun:post(ConnPid, proplists:get_value(path, Props), [], List1),
@@ -293,9 +295,9 @@ falcon(List) ->
     end.
 
 do_form_post(Post, [{Way, OP, Type, Val} | T], Acc) ->
-    Tags = list_to_binary("way=" ++ atom_to_list(Way)
-                          ++ ",op=" ++ atom_to_list(OP)
-                          ++ ",type=" ++ atom_to_list(Type)),
+    Tags = iolist_to_binary(["way=", atom_to_list(Way),
+                             ",op=", atom_to_list(OP),
+                             ",type=", atom_to_list(Type)]),
     do_form_post(Post, T, [[{value, Val}, {tags, Tags} | Post] | Acc]);
 do_form_post(_Time, [], Acc) -> jsx:encode(Acc).
 
