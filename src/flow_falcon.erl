@@ -1,6 +1,6 @@
 %%%-------------------------------------------------------------------
 %%% @author ccredrock@gmail.com
-%%% @copyright (C) 2017, <meituan>
+%%% @copyright (C) 2017, <free>
 %%% @doc
 %%%
 %%% @end
@@ -42,7 +42,7 @@
 
 -define(TIMEOUT, 1000).
 
--define(FALCON_CD,     1 * 60). %% 1分钟
+-define(MINUTE,     1 * 60). %% 1分钟
 
 -define(MIN_LEN,       5 * 60 + 1). %% 5分钟
 -define(MIN_NAME_LIST, [one_ps, five_ps]).
@@ -52,8 +52,8 @@
 
 -record(state, {start_time = 0,
                 acc_list = [],
-                val_map = #{},
-                next_profile = 0, next_falcon = 0}).
+                val_list = [],
+                next_minute = 0}).
 
 %%------------------------------------------------------------------------------
 start() ->
@@ -73,7 +73,7 @@ set_acc(OP, Type, Val) ->
     catch ets:insert(?ETS_ACC, {{OP, Type}, Val}).
 
 set_val(OP, Type, Val) ->
-    catch ets:update_counter(?ETS_VAL, {OP, Type}, [{1, 1}, {2, Val}], {{OP, Type}, 0, 0}).
+    catch ets:update_counter(?ETS_VAL, {OP, Type}, [{2, 1}, {3, Val}], {{OP, Type}, 0, 0}).
 
 inc_total(OP) ->
     add_total(OP, 1).
@@ -138,8 +138,8 @@ terminate(_Reason, _State) ->
     ok.
 
 handle_info(timeout, State) ->
-    State1 = do_flow(State),
-    State2 = do_falcon(State1),
+    State1 = do_second(State),
+    State2 = do_minute(State1),
     erlang:send_after(?TIMEOUT, self(), timeout),
     {noreply, State2};
 
@@ -147,12 +147,23 @@ handle_info(_Info, State) ->
     {noreply, State}.
 
 %%------------------------------------------------------------------------------
-do_flow(State) ->
-    List = [ets:take(?ETS_VAL, K) || {K, _V} <- ets:tab2list(?ETS_VAL)],
-    Flow = ets:tab2list(?ETS_ACC),
-    State#state{val_map = maps:from_list([{K, Acc div Cnt} || {K, {Cnt, Acc}} <- List]),
-                acc_list = lists:sublist([Flow | State#state.acc_list], ?MIN_LEN)}.
+%% @doc timer
+%%------------------------------------------------------------------------------
+do_second(State) ->
+    State#state{acc_list = lists:sublist([ets:tab2list(?ETS_ACC) | State#state.acc_list], ?MIN_LEN),
+                val_list = lists:sublist([ets:tab2list(?ETS_VAL) | State#state.val_list], ?MIN_LEN)}.
 
+do_minute(State) ->
+    Now = ?SECOND(),
+    case Now >= State#state.next_minute of
+        false -> State;
+        true ->
+            catch do_flow_sys(),
+            do_falcon(State),
+            State#state{next_minute = Now + ?MINUTE}
+    end.
+
+%%------------------------------------------------------------------------------
 do_flow_sys() ->
     List = do_get_cpu(),
     Cpu = round(lists:sum([X || {_, X} <- List]) * 100 / length(List)),
@@ -180,26 +191,20 @@ do_get_cpu() ->
 
 %%------------------------------------------------------------------------------
 do_falcon(State) ->
-    Now = ?SECOND(),
-    case Now >= State#state.next_falcon of
-        false -> State;
-        true ->
-            catch do_flow_sys(),
-            case falcon(do_falcon_flow(State)) of
-                ok ->
-                    add_acc(profile, falcon_cnt, 1),
-                    State#state{next_falcon = Now + ?FALCON_CD};
-                {error, Reason} ->
-                    error_logger:error_msg("flow_falcon error ~p~n", [{Reason}]),
-                    State#state{next_falcon = Now + ?FALCON_CD}
-            end
+    case falcon(do_falcon_flow(State)) of
+        ok -> add_acc(profile, falcon_cnt, 1);
+        {error, Reason} -> error_logger:error_msg("flow_falcon error ~p~n", [{Reason}])
     end.
 
+%%------------------------------------------------------------------------------
 do_falcon_flow(State) ->
-    Flow = ets:tab2list(?ETS_ACC),
-    AddList = do_sub_flow(Flow, do_get_nth_flow(?FALCON_CD + 1, State#state.acc_list)),
-    [{val, A, B, C} || {{A, B}, C} <- maps:to_list(State#state.val_map)]
-    ++ [{acc, A, B, C} || {{A, B}, C} <- Flow]
+    AccFlow = ets:tab2list(?ETS_ACC),
+    AddList = do_sub_flow(AccFlow, do_get_nth_flow(?MINUTE + 1, State#state.acc_list)),
+    ValFlow = ets:tab2list(?ETS_VAL),
+    ValFlow1 = do_sub_flow(ValFlow, do_get_nth_flow(?MINUTE + 1, State#state.val_list)),
+    ValList = [{Key, Val div max(1, Count)} || {Key, Count, Val} <- ValFlow1],
+    [{val, A, B, C} || {{A, B}, C} <- ValList]
+    ++ [{acc, A, B, C} || {{A, B}, C} <- AccFlow]
     ++ [{add, A, B, C} || {{A, B}, C} <- AddList].
 
 do_sub_flow(NewList, []) -> NewList;
@@ -208,6 +213,11 @@ do_sub_flow(NewList, OldList) ->
                   case lists:keyfind(Key, 1, OldList) of
                       false -> lists:keystore(Key, 1, Acc, {Key, Count});
                       {_, Count1} -> lists:keystore(Key, 1, Acc, {Key, Count - Count1})
+                  end;
+             ({Key, Count, Val}, Acc) ->
+                  case lists:keyfind(Key, 1, OldList) of
+                      false -> lists:keystore(Key, 1, Acc, {Key, Count, Val});
+                      {_, Count1, Val1} -> lists:keystore(Key, 1, Acc, {Key, Count - Count1, Val - Val1})
                   end
           end,
     lists:foldl(Fun, [], NewList).
@@ -220,33 +230,58 @@ do_get_nth_flow(Nth, List) ->
 
 %%------------------------------------------------------------------------------
 do_flow_list(State) ->
-    List = maps:to_list(State#state.val_map) ++ ets:tab2list(?ETS_ACC),
-    [{last_second, do_get_last(State)}] ++ do_format_flow(List).
+    catch do_flow_sys(),
+    List = ets:tab2list(?ETS_VAL) ++ ets:tab2list(?ETS_ACC),
+    [{last_second, do_format_time(do_get_last(State))}] ++ do_format_flow(List).
 
 do_get_last(State) -> ?SECOND() - State#state.start_time.
 
+%% [{{OP, Type}, Count}]
 do_format_flow(Flow) ->
-    Fun = fun(F, Acc) ->
-                  {Type, Val} = element(1, F),
-                  T = erlang:insert_element(1, erlang:delete_element(1, F), Val),
-                  case lists:keyfind(Type, 1, Acc) of
-                      false -> lists:keystore(Type, 1, Acc, {Type, [T]});
-                      {_, List} -> lists:keyreplace(Type, 1, Acc,
-                                                    {Type, lists:sort([T | List])})
+    Fun = fun(E, Acc) ->
+                  {OP, Type} = element(1, E),
+                  T = {Type, do_format_vals(erlang:delete_element(1, E))},
+                  case lists:keyfind(OP, 1, Acc) of
+                      false -> lists:keystore(OP, 1, Acc, {OP, [T]});
+                      {_, List} -> lists:keyreplace(OP, 1, Acc, {OP, lists:sort([T | List])})
                   end
           end,
     lists:sort(lists:foldl(Fun, [], Flow)).
 
+do_format_vals({V1}) -> do_format_number(V1);
+do_format_vals({V1, V2}) -> do_format_number(V1) ++ " => " ++ do_format_number(V2);
+do_format_vals(Tuple) ->
+    Fun = fun(V, "") -> do_format_number(V);
+             (V, Str) -> Str ++ ", " ++ do_format_number(V)
+          end,
+    lists:foldl(Fun, "", tuple_to_list(Tuple)).
+
+do_format_number(V) ->
+    if
+        V =< 1024 -> integer_to_list(V);
+        V =< 1024 * 1024 -> float_to_list(V / 1024, [{decimals, 3}]) ++ "K";
+        V =< 1024 * 1024 * 1024 -> float_to_list(V / 1024 / 1024, [{decimals, 3}]) ++ "M";
+        true -> float_to_list(V / 1024 / 1024 / 1024, [{decimals, 3}]) ++ "G"
+    end.
+
+do_format_time(V) ->
+    if
+        V =< 60 -> integer_to_list(V) ++ "s";
+        V =< 60 * 60 -> integer_to_list(V div 60) ++ "m" ++ do_format_time(V rem 60);
+        true -> integer_to_list(V div 3600) ++ "h" ++ do_format_time(V rem 3600)
+    end.
+
 do_flow_near(State) ->
     Last = do_get_last(State),
-    Flow = ets:tab2list(?ETS_ACC),
-    Result = do_list_flow(?MIN_LEN_LIST,
-                          State#state.acc_list,
-                          Flow,
-                          length(State#state.acc_list),
-                          do_ps_flow(Flow, Last),
-                          []),
-    [{last_second, Last}, list_to_tuple([op] ++ ?MIN_NAME_LIST ++ [acc_ps])] ++ do_format_flow(Result).
+    AccFlow = ets:tab2list(?ETS_ACC),
+    AccList = State#state.acc_list,
+    AccResult = do_list_flow(?MIN_LEN_LIST, AccList, AccFlow, length(AccList), do_ps_flow(AccFlow, Last), []),
+    ValFlow = ets:tab2list(?ETS_VAL),
+    ValList = State#state.val_list,
+    ValResult = do_list_flow(?MIN_LEN_LIST, ValList, ValFlow, length(ValList), do_ps_flow(ValFlow, Last), []),
+    [{last_second, do_format_time(Last)},
+     {op, [list_to_tuple([type] ++ ?MIN_NAME_LIST ++ [acc_ps])]}
+     | do_format_flow(AccResult ++ ValResult)].
 
 do_list_flow([HLen | T], FlowList, Flow, Len, PsFlow, Acc) ->
     case HLen > Len of
@@ -262,7 +297,8 @@ do_list_flow([], _AccFlow, _Flow, _Len, PsFlow, Acc) ->
 
 %% per second
 do_ps_flow(List, Time) ->
-    [{{Type, Val}, Count div Time} || {{Type, Val}, Count} <- List].
+    [{{OP, Type}, Count div Time} || {{OP, Type}, Count} <- List]
+    ++ [{{OP, Type}, Val div max(1, Count)} || {{OP, Type}, Count, Val} <- List].
 
 %% List:{a,1,2}, New:{a,3} Acc:{a,1,2,3}
 do_append_flow([], New) -> New;
@@ -278,20 +314,20 @@ do_append_flow(List, New) ->
 falcon([]) -> ok;
 falcon(List) ->
     case application:get_env(flow_falcon, falcon) of
-        undefine -> skip;
+        undefined -> skip;
         {ok, Props} ->
             {ok, HostName} = inet:gethostname(),
             Post = [{metric, list_to_binary(proplists:get_value(metric, Props))},
                     {endpoint, list_to_binary(proplists:get_value(endpoint, Props, HostName))},
                     {timestamp, ?SECOND()},
                     {counterType, 'GAUGE'},
-                    {step, ?FALCON_CD}],
-            List1 = do_form_post(Post, List, []),
+                    {step, ?MINUTE}],
+            Json = do_form_post(Post, List, []),
             {ok, ConnPid} = gun:open(proplists:get_value(host, Props),
                                      proplists:get_value(port, Props)),
             try
                 {ok, http} = gun:await_up(ConnPid),
-                Ref = gun:post(ConnPid, proplists:get_value(path, Props), [], List1),
+                Ref = gun:post(ConnPid, proplists:get_value(path, Props), [], Json),
                 {response, nofin, 200, _} = gun:await(ConnPid, Ref), ok
             catch E:R -> {error, {E, R, erlang:get_stacktrace()}}
             after
