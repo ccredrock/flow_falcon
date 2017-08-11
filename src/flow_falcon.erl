@@ -148,6 +148,7 @@ handle_info(_Info, State) ->
 
 %%------------------------------------------------------------------------------
 do_flow(State) ->
+    catch do_flow_sys(),
     List = [ets:take(?ETS_VAL, K) || {K, _V} <- ets:tab2list(?ETS_VAL)],
     Flow = ets:tab2list(?ETS_ACC),
     State#state{val_map = maps:from_list([{K, Acc div Cnt} || {K, {Cnt, Acc}} <- List]),
@@ -184,7 +185,6 @@ do_falcon(State) ->
     case Now >= State#state.next_falcon of
         false -> State;
         true ->
-            catch do_flow_sys(),
             case falcon(do_falcon_flow(State)) of
                 ok ->
                     add_acc(profile, falcon_cnt, 1),
