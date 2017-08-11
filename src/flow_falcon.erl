@@ -73,7 +73,7 @@ set_acc(OP, Type, Val) ->
     catch ets:insert(?ETS_ACC, {{OP, Type}, Val}).
 
 set_val(OP, Type, Val) ->
-    catch ets:update_counter(?ETS_VAL, {OP, Type}, [{1, 1}, {2, Val}], {{OP, Type}, 0, 0}).
+    catch ets:update_counter(?ETS_VAL, {OP, Type}, [{2, 1}, {3, Val}], {{OP, Type}, 0, 0}).
 
 inc_total(OP) ->
     add_total(OP, 1).
