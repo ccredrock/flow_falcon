@@ -37,8 +37,8 @@
 %%------------------------------------------------------------------------------
 -behaviour(gen_server).
 
--define(ETS_ACC, '$flow_falcon_acc'). %% 累计 {{type1, type2}, val}
--define(ETS_VAL, '$flow_falcon_val'). %% 当前 {{type1, type2}, val}
+-define(ETS_ACC,     '$flow_falcon_acc'). %% 累计 {{type1, type2}, val}
+-define(ETS_VAL,     '$flow_falcon_val'). %% 当前 {{type1, type2}, val}
 
 -define(TIMEOUT, 1000).
 
@@ -50,7 +50,10 @@
 
 -define(SECOND(), erlang:system_time(seconds)).
 
--record(state, {start_time = 0, flow_list = [], next_profile = 0, next_falcon = 0}).
+-record(state, {start_time = 0,
+                acc_list = [],
+                val_map = #{},
+                next_profile = 0, next_falcon = 0}).
 
 %%------------------------------------------------------------------------------
 start() ->
@@ -70,7 +73,7 @@ set_acc(OP, Type, Val) ->
     catch ets:insert(?ETS_ACC, {{OP, Type}, Val}).
 
 set_val(OP, Type, Val) ->
-    catch ets:insert(?ETS_VAL, {{OP, Type}, Val}).
+    catch ets:update_counter(?ETS_VAL, {OP, Type}, [{1, 1}, {2, Val}], {{OP, Type}, 0, 0}).
 
 inc_total(OP) ->
     add_total(OP, 1).
@@ -145,8 +148,10 @@ handle_info(_Info, State) ->
 
 %%------------------------------------------------------------------------------
 do_flow(State) ->
+    List = [ets:take(?ETS_VAL, K) || {K, _V} <- ets:tab2list(?ETS_VAL)],
     Flow = ets:tab2list(?ETS_ACC),
-    State#state{flow_list = lists:sublist([Flow | State#state.flow_list], ?MIN_LEN)}.
+    State#state{val_map = maps:from_list([{K, Acc div Cnt} || {K, {Cnt, Acc}} <- List]),
+                acc_list = lists:sublist([Flow | State#state.acc_list], ?MIN_LEN)}.
 
 do_flow_sys() ->
     List = do_get_cpu(),
@@ -192,8 +197,8 @@ do_falcon(State) ->
 
 do_falcon_flow(State) ->
     Flow = ets:tab2list(?ETS_ACC),
-    AddList = do_sub_flow(Flow, do_get_nth_flow(?FALCON_CD + 1, State#state.flow_list)),
-    [{val, A, B, C} || {{A, B}, C} <- ets:tab2list(?ETS_VAL)]
+    AddList = do_sub_flow(Flow, do_get_nth_flow(?FALCON_CD + 1, State#state.acc_list)),
+    [{val, A, B, C} || {{A, B}, C} <- maps:to_list(State#state.val_map)]
     ++ [{acc, A, B, C} || {{A, B}, C} <- Flow]
     ++ [{add, A, B, C} || {{A, B}, C} <- AddList].
 
@@ -215,7 +220,8 @@ do_get_nth_flow(Nth, List) ->
 
 %%------------------------------------------------------------------------------
 do_flow_list(State) ->
-    [{last_second, do_get_last(State)}] ++ do_format_flow(ets:tab2list(?ETS_VAL) ++ ets:tab2list(?ETS_ACC)).
+    List = maps:to_list(State#state.val_map) ++ ets:tab2list(?ETS_ACC),
+    [{last_second, do_get_last(State)}] ++ do_format_flow(List).
 
 do_get_last(State) -> ?SECOND() - State#state.start_time.
 
@@ -235,9 +241,9 @@ do_flow_near(State) ->
     Last = do_get_last(State),
     Flow = ets:tab2list(?ETS_ACC),
     Result = do_list_flow(?MIN_LEN_LIST,
-                          State#state.flow_list,
+                          State#state.acc_list,
                           Flow,
-                          length(State#state.flow_list),
+                          length(State#state.acc_list),
                           do_ps_flow(Flow, Last),
                           []),
     [{last_second, Last}, list_to_tuple([op] ++ ?MIN_NAME_LIST ++ [acc_ps])] ++ do_format_flow(Result).
