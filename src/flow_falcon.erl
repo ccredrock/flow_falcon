@@ -42,7 +42,7 @@
 
 -define(TIMEOUT, 1000).
 
--define(FALCON_CD,     1 * 60). %% 1分钟
+-define(MINUTE,     1 * 60). %% 1分钟
 
 -define(MIN_LEN,       5 * 60 + 1). %% 5分钟
 -define(MIN_NAME_LIST, [one_ps, five_ps]).
@@ -53,7 +53,7 @@
 -record(state, {start_time = 0,
                 acc_list = [],
                 val_map = #{},
-                next_profile = 0, next_falcon = 0}).
+                next_minute = 0}).
 
 %%------------------------------------------------------------------------------
 start() ->
@@ -138,8 +138,8 @@ terminate(_Reason, _State) ->
     ok.
 
 handle_info(timeout, State) ->
-    State1 = do_flow(State),
-    State2 = do_falcon(State1),
+    State1 = do_second(State),
+    State2 = do_minute(State1),
     erlang:send_after(?TIMEOUT, self(), timeout),
     {noreply, State2};
 
@@ -147,13 +147,24 @@ handle_info(_Info, State) ->
     {noreply, State}.
 
 %%------------------------------------------------------------------------------
-do_flow(State) ->
-    catch do_flow_sys(),
-    List = [ets:take(?ETS_VAL, K) || {K, _V} <- ets:tab2list(?ETS_VAL)],
+%% @doc timer
+%%------------------------------------------------------------------------------
+do_second(State) ->
     Flow = ets:tab2list(?ETS_ACC),
-    State#state{val_map = maps:from_list([{K, Acc div Cnt} || {K, {Cnt, Acc}} <- List]),
-                acc_list = lists:sublist([Flow | State#state.acc_list], ?MIN_LEN)}.
+    State#state{acc_list = lists:sublist([Flow | State#state.acc_list], ?MIN_LEN)}.
 
+do_minute(State) ->
+    Now = ?SECOND(),
+    case Now >= State#state.next_minute of
+        false -> State;
+        true ->
+            catch do_flow_sys(),
+            State1 = do_take_val(State),
+            do_falcon(State1),
+            State1#state{next_minute = Now + ?MINUTE}
+    end.
+
+%%------------------------------------------------------------------------------
 do_flow_sys() ->
     List = do_get_cpu(),
     Cpu = round(lists:sum([X || {_, X} <- List]) * 100 / length(List)),
@@ -179,25 +190,26 @@ do_get_cpu() ->
          end,
    lists:map(Fun, lists:zip(Ts0, Ts1)).
 
+do_take_val(State) ->
+    List = [ets:take(?ETS_VAL, K) || {K, _, _} <- ets:tab2list(?ETS_VAL)],
+    Map = maps:from_list([{K, Acc div Cnt} || [{K, Cnt, Acc}] <- List]),
+    State#state{val_map = Map}.
+
+do_cal_val(State) ->
+    Map = maps:from_list([{K, Acc div Cnt} || {K, Cnt, Acc} <- ets:tab2list(?ETS_VAL)]),
+    State#state{val_map = Map}.
+
 %%------------------------------------------------------------------------------
 do_falcon(State) ->
-    Now = ?SECOND(),
-    case Now >= State#state.next_falcon of
-        false -> State;
-        true ->
-            case falcon(do_falcon_flow(State)) of
-                ok ->
-                    add_acc(profile, falcon_cnt, 1),
-                    State#state{next_falcon = Now + ?FALCON_CD};
-                {error, Reason} ->
-                    error_logger:error_msg("flow_falcon error ~p~n", [{Reason}]),
-                    State#state{next_falcon = Now + ?FALCON_CD}
-            end
+    case falcon(do_falcon_flow(State)) of
+        ok -> add_acc(profile, falcon_cnt, 1);
+        {error, Reason} -> error_logger:error_msg("flow_falcon error ~p~n", [{Reason}])
     end.
 
+%%------------------------------------------------------------------------------
 do_falcon_flow(State) ->
     Flow = ets:tab2list(?ETS_ACC),
-    AddList = do_sub_flow(Flow, do_get_nth_flow(?FALCON_CD + 1, State#state.acc_list)),
+    AddList = do_sub_flow(Flow, do_get_nth_flow(?MINUTE + 1, State#state.acc_list)),
     [{val, A, B, C} || {{A, B}, C} <- maps:to_list(State#state.val_map)]
     ++ [{acc, A, B, C} || {{A, B}, C} <- Flow]
     ++ [{add, A, B, C} || {{A, B}, C} <- AddList].
@@ -220,8 +232,10 @@ do_get_nth_flow(Nth, List) ->
 
 %%------------------------------------------------------------------------------
 do_flow_list(State) ->
-    List = maps:to_list(State#state.val_map) ++ ets:tab2list(?ETS_ACC),
-    [{last_second, do_get_last(State)}] ++ do_format_flow(List).
+    catch do_flow_sys(),
+    State1 = do_cal_val(State),
+    List = maps:to_list(State1#state.val_map) ++ ets:tab2list(?ETS_ACC),
+    [{last_second, do_get_last(State1)}] ++ do_format_flow(List).
 
 do_get_last(State) -> ?SECOND() - State#state.start_time.
 
@@ -285,7 +299,7 @@ falcon(List) ->
                     {endpoint, list_to_binary(proplists:get_value(endpoint, Props, HostName))},
                     {timestamp, ?SECOND()},
                     {counterType, 'GAUGE'},
-                    {step, ?FALCON_CD}],
+                    {step, ?MINUTE}],
             List1 = do_form_post(Post, List, []),
             {ok, ConnPid} = gun:open(proplists:get_value(host, Props),
                                      proplists:get_value(port, Props)),
