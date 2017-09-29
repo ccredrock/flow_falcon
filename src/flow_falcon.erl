@@ -52,7 +52,7 @@
 
 -record(state, {start_time = 0,
                 acc_list = [],
-                val_map = #{},
+                val_list = [],
                 next_minute = 0}).
 
 %%------------------------------------------------------------------------------
@@ -150,8 +150,8 @@ handle_info(_Info, State) ->
 %% @doc timer
 %%------------------------------------------------------------------------------
 do_second(State) ->
-    Flow = ets:tab2list(?ETS_ACC),
-    State#state{acc_list = lists:sublist([Flow | State#state.acc_list], ?MIN_LEN)}.
+    State#state{acc_list = lists:sublist([ets:tab2list(?ETS_ACC) | State#state.acc_list], ?MIN_LEN),
+                val_list = lists:sublist([ets:tab2list(?ETS_VAL) | State#state.val_list], ?MIN_LEN)}.
 
 do_minute(State) ->
     Now = ?SECOND(),
@@ -159,9 +159,8 @@ do_minute(State) ->
         false -> State;
         true ->
             catch do_flow_sys(),
-            State1 = do_take_val(State),
-            do_falcon(State1),
-            State1#state{next_minute = Now + ?MINUTE}
+            do_falcon(State),
+            State#state{next_minute = Now + ?MINUTE}
     end.
 
 %%------------------------------------------------------------------------------
@@ -190,16 +189,6 @@ do_get_cpu() ->
          end,
    lists:map(Fun, lists:zip(Ts0, Ts1)).
 
-do_take_val(State) ->
-    List = ets:tab2list(?ETS_VAL),
-    [ets:update_counter(?ETS_VAL, K, [{2, -Cnt}, {3, -Acc}]) || {K, Cnt, Acc} <- List],
-    Map = maps:from_list([{K, Acc div max(1, Cnt)} || [{K, Cnt, Acc}] <- List]),
-    State#state{val_map = Map}.
-
-do_cal_val(State) ->
-    Map = maps:from_list([{K, Acc div max(1, Cnt)} || {K, Cnt, Acc} <- ets:tab2list(?ETS_VAL)]),
-    State#state{val_map = Map}.
-
 %%------------------------------------------------------------------------------
 do_falcon(State) ->
     case falcon(do_falcon_flow(State)) of
@@ -209,10 +198,13 @@ do_falcon(State) ->
 
 %%------------------------------------------------------------------------------
 do_falcon_flow(State) ->
-    Flow = ets:tab2list(?ETS_ACC),
-    AddList = do_sub_flow(Flow, do_get_nth_flow(?MINUTE + 1, State#state.acc_list)),
-    [{val, A, B, C} || {{A, B}, C} <- maps:to_list(State#state.val_map)]
-    ++ [{acc, A, B, C} || {{A, B}, C} <- Flow]
+    AccFlow = ets:tab2list(?ETS_ACC),
+    AddList = do_sub_flow(AccFlow, do_get_nth_flow(?MINUTE + 1, State#state.acc_list)),
+    ValFlow = ets:tab2list(?ETS_VAL),
+    ValFlow1 = do_sub_flow(ValFlow, do_get_nth_flow(?MINUTE + 1, State#state.val_list)),
+    ValList = [{Key, Val div max(1, Count)} || {Key, Count, Val} <- ValFlow1],
+    [{val, A, B, C} || {{A, B}, C} <- ValList]
+    ++ [{acc, A, B, C} || {{A, B}, C} <- AccFlow]
     ++ [{add, A, B, C} || {{A, B}, C} <- AddList].
 
 do_sub_flow(NewList, []) -> NewList;
@@ -221,6 +213,11 @@ do_sub_flow(NewList, OldList) ->
                   case lists:keyfind(Key, 1, OldList) of
                       false -> lists:keystore(Key, 1, Acc, {Key, Count});
                       {_, Count1} -> lists:keystore(Key, 1, Acc, {Key, Count - Count1})
+                  end;
+             ({Key, Count, Val}, Acc) ->
+                  case lists:keyfind(Key, 1, OldList) of
+                      false -> lists:keystore(Key, 1, Acc, {Key, Count, Val});
+                      {_, Count1, Val1} -> lists:keystore(Key, 1, Acc, {Key, Count - Count1, Val - Val1})
                   end
           end,
     lists:foldl(Fun, [], NewList).
@@ -234,34 +231,57 @@ do_get_nth_flow(Nth, List) ->
 %%------------------------------------------------------------------------------
 do_flow_list(State) ->
     catch do_flow_sys(),
-    State1 = do_cal_val(State),
-    List = maps:to_list(State1#state.val_map) ++ ets:tab2list(?ETS_ACC),
-    [{last_second, do_get_last(State1)}] ++ do_format_flow(List).
+    List = ets:tab2list(?ETS_VAL) ++ ets:tab2list(?ETS_ACC),
+    [{last_second, do_format_time(do_get_last(State))}] ++ do_format_flow(List).
 
 do_get_last(State) -> ?SECOND() - State#state.start_time.
 
+%% [{{OP, Type}, Count}]
 do_format_flow(Flow) ->
-    Fun = fun(F, Acc) ->
-                  {Type, Val} = element(1, F),
-                  T = erlang:insert_element(1, erlang:delete_element(1, F), Val),
-                  case lists:keyfind(Type, 1, Acc) of
-                      false -> lists:keystore(Type, 1, Acc, {Type, [T]});
-                      {_, List} -> lists:keyreplace(Type, 1, Acc,
-                                                    {Type, lists:sort([T | List])})
+    Fun = fun(E, Acc) ->
+                  {OP, Type} = element(1, E),
+                  T = {Type, do_format_vals(erlang:delete_element(1, E))},
+                  case lists:keyfind(OP, 1, Acc) of
+                      false -> lists:keystore(OP, 1, Acc, {OP, [T]});
+                      {_, List} -> lists:keyreplace(OP, 1, Acc, {OP, lists:sort([T | List])})
                   end
           end,
     lists:sort(lists:foldl(Fun, [], Flow)).
 
+do_format_vals({V1}) -> do_format_number(V1);
+do_format_vals({V1, V2}) -> do_format_number(V1) ++ " => " ++ do_format_number(V2);
+do_format_vals(Tuple) ->
+    Fun = fun(V, "") -> do_format_number(V);
+             (V, Str) -> Str ++ ", " ++ do_format_number(V)
+          end,
+    lists:foldl(Fun, "", tuple_to_list(Tuple)).
+
+do_format_number(V) ->
+    if
+        V =< 1024 -> integer_to_list(V);
+        V =< 1024 * 1024 -> float_to_list(V / 1024, [{decimals, 3}]) ++ "K";
+        V =< 1024 * 1024 * 1024 -> float_to_list(V / 1024 / 1024, [{decimals, 3}]) ++ "M";
+        true -> float_to_list(V / 1024 / 1024 / 1024, [{decimals, 3}]) ++ "G"
+    end.
+
+do_format_time(V) ->
+    if
+        V =< 60 -> integer_to_list(V) ++ "s";
+        V =< 60 * 60 -> integer_to_list(V div 60) ++ "m" ++ do_format_time(V rem 60);
+        true -> integer_to_list(V div 3600) ++ "h" ++ do_format_time(V rem 3600)
+    end.
+
 do_flow_near(State) ->
     Last = do_get_last(State),
-    Flow = ets:tab2list(?ETS_ACC),
-    Result = do_list_flow(?MIN_LEN_LIST,
-                          State#state.acc_list,
-                          Flow,
-                          length(State#state.acc_list),
-                          do_ps_flow(Flow, Last),
-                          []),
-    [{last_second, Last}, list_to_tuple([op] ++ ?MIN_NAME_LIST ++ [acc_ps])] ++ do_format_flow(Result).
+    AccFlow = ets:tab2list(?ETS_ACC),
+    AccList = State#state.acc_list,
+    AccResult = do_list_flow(?MIN_LEN_LIST, AccList, AccFlow, length(AccList), do_ps_flow(AccFlow, Last), []),
+    ValFlow = ets:tab2list(?ETS_VAL),
+    ValList = State#state.val_list,
+    ValResult = do_list_flow(?MIN_LEN_LIST, ValList, ValFlow, length(ValList), do_ps_flow(ValFlow, Last), []),
+    [{last_second, do_format_time(Last)},
+     {op, [list_to_tuple([type] ++ ?MIN_NAME_LIST ++ [acc_ps])]}
+     | do_format_flow(AccResult ++ ValResult)].
 
 do_list_flow([HLen | T], FlowList, Flow, Len, PsFlow, Acc) ->
     case HLen > Len of
@@ -277,7 +297,8 @@ do_list_flow([], _AccFlow, _Flow, _Len, PsFlow, Acc) ->
 
 %% per second
 do_ps_flow(List, Time) ->
-    [{{Type, Val}, Count div Time} || {{Type, Val}, Count} <- List].
+    [{{OP, Type}, Count div Time} || {{OP, Type}, Count} <- List]
+    ++ [{{OP, Type}, Val div max(1, Count)} || {{OP, Type}, Count, Val} <- List].
 
 %% List:{a,1,2}, New:{a,3} Acc:{a,1,2,3}
 do_append_flow([], New) -> New;
