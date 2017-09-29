@@ -191,12 +191,13 @@ do_get_cpu() ->
    lists:map(Fun, lists:zip(Ts0, Ts1)).
 
 do_take_val(State) ->
-    List = [ets:take(?ETS_VAL, K) || {K, _, _} <- ets:tab2list(?ETS_VAL)],
-    Map = maps:from_list([{K, Acc div Cnt} || [{K, Cnt, Acc}] <- List]),
+    List = ets:tab2list(?ETS_VAL),
+    [ets:update_counter(?ETS_VAL, K, [{2, -Cnt}, {3, -Acc}]) || {K, Cnt, Acc} <- List],
+    Map = maps:from_list([{K, Acc div max(1, Cnt)} || [{K, Cnt, Acc}] <- List]),
     State#state{val_map = Map}.
 
 do_cal_val(State) ->
-    Map = maps:from_list([{K, Acc div Cnt} || {K, Cnt, Acc} <- ets:tab2list(?ETS_VAL)]),
+    Map = maps:from_list([{K, Acc div max(1, Cnt)} || {K, Cnt, Acc} <- ets:tab2list(?ETS_VAL)]),
     State#state{val_map = Map}.
 
 %%------------------------------------------------------------------------------
@@ -292,7 +293,7 @@ do_append_flow(List, New) ->
 falcon([]) -> ok;
 falcon(List) ->
     case application:get_env(flow_falcon, falcon) of
-        undefine -> skip;
+        undefined -> skip;
         {ok, Props} ->
             {ok, HostName} = inet:gethostname(),
             Post = [{metric, list_to_binary(proplists:get_value(metric, Props))},
@@ -300,12 +301,12 @@ falcon(List) ->
                     {timestamp, ?SECOND()},
                     {counterType, 'GAUGE'},
                     {step, ?MINUTE}],
-            List1 = do_form_post(Post, List, []),
+            Json = do_form_post(Post, List, []),
             {ok, ConnPid} = gun:open(proplists:get_value(host, Props),
                                      proplists:get_value(port, Props)),
             try
                 {ok, http} = gun:await_up(ConnPid),
-                Ref = gun:post(ConnPid, proplists:get_value(path, Props), [], List1),
+                Ref = gun:post(ConnPid, proplists:get_value(path, Props), [], Json),
                 {response, nofin, 200, _} = gun:await(ConnPid, Ref), ok
             catch E:R -> {error, {E, R, erlang:get_stacktrace()}}
             after
