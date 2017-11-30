@@ -337,9 +337,14 @@ falcon(List) ->
     end.
 
 do_form_post(Post, [{Way, OP, Type, Val} | T], Acc) ->
-    Tags = iolist_to_binary(["way=", atom_to_list(Way),
-                             ",op=", atom_to_list(OP),
-                             ",type=", atom_to_list(Type)]),
+    Tags = iolist_to_binary(["way=", to_list(Way),
+                             ",op=", to_list(OP),
+                             ",type=", to_list(Type)]),
     do_form_post(Post, T, [[{value, Val}, {tags, Tags} | Post] | Acc]);
 do_form_post(_Time, [], Acc) -> jsx:encode(Acc).
+
+to_list(X) when is_atom(X) -> atom_to_list(X);
+to_list(X) when is_binary(X) -> binary_to_list(X);
+to_list(X) when is_integer(X) -> integer_to_list(X);
+to_list(X) when is_list(X) -> X.
 

@@ -12,6 +12,10 @@ basic_test_() ->
          fun() ->
                  ?assertEqual(ok, flow_falcon:falcon([{val, a, b, 1}]))
          end},
+       {"perf",
+        fun() ->
+                ?assertEqual(ok, flow_falcon:perf([{val, a, b, 1}]))
+        end},
        {"flow",
          fun() ->
                  flow_falcon:flow_acc(k1, k2, 10),
