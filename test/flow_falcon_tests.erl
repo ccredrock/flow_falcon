@@ -8,21 +8,18 @@
 basic_test_() ->
     {inorder,
      {setup, ?Setup, ?Clearnup,
-      [{"falcon",
+      [
+       {"falcon",
          fun() ->
                  ?assertEqual(ok, flow_falcon:falcon([{val, a, b, 1}]))
          end},
-       {"perf",
-        fun() ->
-                ?assertEqual(ok, flow_falcon:perf([{val, a, b, 1}]))
-        end},
        {"flow",
          fun() ->
-                 flow_falcon:flow_acc(k1, k2, 10),
-                 flow_falcon:flow_acc(k1, k2, 10),
-                 ?assertEqual([{k2, 20}], proplists:get_value(k1, flow_falcon:flow_list())),
-                 flow_falcon:flow_acc(k1, k3, 10),
-                 ?assertEqual([{k2, 20}, {k3, 10}], proplists:get_value(k1, flow_falcon:flow_list()))
+                 flow_falcon:add_acc(k1, k2, 10),
+                 flow_falcon:add_acc(k1, k2, 10),
+                 ?assertEqual([{k2, "20"}], proplists:get_value(k1, flow_falcon:list_flow())),
+                 flow_falcon:add_acc(k1, k3, 10),
+                 ?assertEqual([{k2, "20"}, {k3, "10"}], proplists:get_value(k1, flow_falcon:list_flow()))
          end},
        {"flow_falcon",
         {timeout, 70,
@@ -30,7 +27,7 @@ basic_test_() ->
                  Fun = fun F(X) -> receive after 1000 -> io:format(user, "wait second ~p~n", [X]), F(X - 1) end end,
                  spawn(fun() -> Fun(60) end),
                  timer:sleep(61 * 1000),
-                 ?assertEqual(2, flow_falcon:falcon_cnt())
+                 ?assertEqual("2", flow_falcon:falcon_cnt())
          end}
        }
       ]}
