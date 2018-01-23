@@ -1,8 +1,9 @@
-{application,flow_falcon,
-             [{description,[]},
-              {vsn,"1.1"},
-              {registered,[]},
-              {applications,[kernel,stdlib]},
-              {mod,{flow_falcon_app,[]}},
-              {env,[]},
-              {modules,[]}]}.
+{application,
+ flow_falcon,
+ [{description,[]},
+  {vsn,"1.2"},
+  {registered,[]},
+  {applications,[kernel,stdlib,jsx,inets]},
+  {mod,{flow_falcon_app,[]}},
+  {env,[]},
+  {modules,[]}]}.

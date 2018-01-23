@@ -58,7 +58,7 @@
 %%------------------------------------------------------------------------------
 -spec start() -> 'ok' | {'error', any()}.
 start() ->
-    application:start(?MODULE).
+    application:ensure_all_started(?MODULE).
 
 -spec stop() -> 'ok' | {'error', any()}.
 stop() ->
@@ -362,16 +362,10 @@ falcon(List) ->
                     {counterType, 'GAUGE'},
                     {step, ?MINUTE}],
             Json = do_form_post(Post, List, []),
-            {ok, ConnPid} = gun:open(proplists:get_value(host, Props),
-                                     proplists:get_value(port, Props)),
-            try
-                {ok, http} = gun:await_up(ConnPid),
-                Ref = gun:post(ConnPid, proplists:get_value(path, Props), [], Json),
-                {response, nofin, 200, _} = gun:await(ConnPid, Ref), ok
-            catch E:R -> {error, {E, R, erlang:get_stacktrace()}}
-            after
-                gun:close(ConnPid),
-                gun:flush(ConnPid)
+            case catch httpc:request(post, {proplists:get_value(url, Props), [], "application/json", Json}, [], []) of
+                {ok, _} -> ok;
+                {error, Reason} -> {error, Reason};
+                Reason -> {error, Reason}
             end
     end.
 
