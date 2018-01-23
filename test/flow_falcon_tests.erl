@@ -2,7 +2,7 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
--define(Setup, fun() -> application:start(flow_falcon) end).
+-define(Setup, fun() -> application:ensure_all_started(flow_falcon) end).
 -define(Clearnup, fun(_) -> application:stop(flow_falcon) end).
 
 basic_test_() ->

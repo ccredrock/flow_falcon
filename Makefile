@@ -3,7 +3,8 @@ REBAR=./rebar
 BEAMDIR=./deps/*/ebin ./ebin
 
 .PHONY: deps doc test
-all: clean deps compile xref
+compile:
+	@$(REBAR) compile
 
 clean:
 	@$(REBAR) clean
@@ -11,9 +12,6 @@ clean:
 deps:
 	@$(REBAR) get-deps
 	@$(REBAR) update-deps
-
-compile:
-	@$(REBAR) compile
 
 xref:
 	@$(REBAR) xref skip_deps=true
