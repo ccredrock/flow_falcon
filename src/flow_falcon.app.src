@@ -3,7 +3,7 @@
  [{description,[]},
   {vsn,"1.2"},
   {registered,[]},
-  {applications,[kernel,stdlib,jsx,inets]},
+  {applications,[kernel, stdlib, jsx, inets]},
   {mod,{flow_falcon_app,[]}},
   {env,[]},
   {modules,[]}]}.
