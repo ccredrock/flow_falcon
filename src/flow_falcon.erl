@@ -293,10 +293,10 @@ do_format_vals(Tuple) ->
 %% @private
 do_format_number(V) ->
     if
-        V =< 1024 -> integer_to_list(V);
-        V =< 1024 * 1024 -> float_to_list(V / 1024, [{decimals, 3}]) ++ "K";
-        V =< 1024 * 1024 * 1024 -> float_to_list(V / 1024 / 1024, [{decimals, 3}]) ++ "M";
-        true -> float_to_list(V / 1024 / 1024 / 1024, [{decimals, 3}]) ++ "G"
+        V =< 1000 -> integer_to_list(V);
+        V =< 1000 * 1000 -> float_to_list(V / 1000, [{decimals, 3}]) ++ "K";
+        V =< 1000 * 1000 * 1000 -> float_to_list(V / 1000 / 1000, [{decimals, 3}]) ++ "M";
+        true -> float_to_list(V / 1000 / 1000 / 1000, [{decimals, 3}]) ++ "G"
     end.
 
 %% @private
