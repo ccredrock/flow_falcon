@@ -11,12 +11,12 @@
 
 -export([ft/0, fl/0, fn/0, fl/1, fn/1, fp/0]).
 
-ft()  -> flow_falcon:list_total().
-fl()  -> flow_falcon:list_flow().
-fn()  -> flow_falcon:list_near().
-fl(X) -> flow_falcon:list_flow(X).
-fn(X) -> flow_falcon:list_near(X).
-fp() -> flow_falcon:list_flow(profile).
+ft()  -> flow_falcon:total().
+fl()  -> flow_falcon:flow().
+fn()  -> flow_falcon:near().
+fl(X) -> flow_falcon:flow(X).
+fn(X) -> flow_falcon:near(X).
+fp() -> flow_falcon:flow(profile).
 
 -endif.
 

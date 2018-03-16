@@ -1,7 +1,7 @@
 {application,
  flow_falcon,
  [{description,[]},
-  {vsn,"1.2"},
+  {vsn,"1.3"},
   {registered,[]},
   {applications,[kernel, stdlib, jsx, inets]},
   {mod,{flow_falcon_app,[]}},
