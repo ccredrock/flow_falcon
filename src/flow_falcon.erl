@@ -16,12 +16,12 @@
          set_total/2,   %% 设置总计次数
          set_total/3]). %% 设置总计次数
 
--export([total/0,  %% 总计数据
-         flow/0,   %% 累计数据
-         flow/1,   %% 累计数据
-         near/1,   %% 最近数据
-         list/0,   %% 详细数据
-         near/0]). %% 最近数据
+-export([list_total/0,    %% 总计数据
+         list_flow/0,     %% 累计数据
+         list_flow/1,     %% 累计数据
+         list_near/1,     %% 最近数据
+         list_near/0,     %% 最近数据
+         list_detail/0]). %% 详细数据
 
 -export([falcon/1]).    %% 上传列表
 
@@ -103,27 +103,27 @@ set_total(OP, Type, Val) ->
 %%------------------------------------------------------------------------------
 %% @doc list val
 %%------------------------------------------------------------------------------
--spec total() -> [tuple()].
-total() ->
-    FL = flow(),
+-spec list_total() -> [tuple()].
+list_total() ->
+    FL = list_flow(),
     [{last_second, proplists:get_value(last_second, FL, 0)},
-     {total, proplists:get_value(total, near(), [])},
+     {total, proplists:get_value(total, list_near(), [])},
      {total, proplists:get_value(total, FL, [])}].
 
-list() ->
+list_detail() ->
     ets:tab2list(?ETS_ACC).
 
 %%------------------------------------------------------------------------------
--spec flow() -> [tuple()].
-flow() ->
+-spec list_flow() -> [tuple()].
+list_flow() ->
     State = sys:get_state(?MODULE),
     refresh_system(),
     List = ets:tab2list(?ETS_VAL) ++ ets:tab2list(?ETS_ACC),
     [{last_second, format_time(?SECOND() - State#state.start_time)}] ++ format_flow(List).
 
--spec flow(to_string()) -> [tuple()].
-flow(OP) ->
-    proplists:get_value(OP, flow()).
+-spec list_flow(to_string()) -> [tuple()].
+list_flow(OP) ->
+    proplists:get_value(OP, list_flow()).
 
 %% @private [{{OP, Type}, Count}]
 format_flow(Flow) ->
@@ -164,8 +164,8 @@ format_time(V) ->
     end.
 
 %%------------------------------------------------------------------------------
--spec near() -> [tuple()].
-near() ->
+-spec list_near() -> [tuple()].
+list_near() ->
     State = sys:get_state(?MODULE),
     Last = ?SECOND() - State#state.start_time,
     AccFlow = ets:tab2list(?ETS_ACC),
@@ -178,9 +178,9 @@ near() ->
      {op, [list_to_tuple([type] ++ ?MIN_NAME_LIST ++ [acc_ps])]}
      | format_flow(AccResult ++ ValResult)].
 
--spec near(to_string()) -> [tuple()].
-near(OP) ->
-    proplists:get_value(OP, near()).
+-spec list_near(to_string()) -> [tuple()].
+list_near(OP) ->
+    proplists:get_value(OP, list_near()).
 
 %% @private
 format_near([HLen | T], FlowList, Flow, Len, PsFlow, Acc) ->
